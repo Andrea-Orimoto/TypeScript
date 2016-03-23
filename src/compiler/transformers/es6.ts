@@ -10,6 +10,134 @@ namespace ts {
         /** Enables substitutions for block-scoped bindings. */
         BlockScopedBindings = 1 << 1,
     }
+    /**
+     * If loop contains block scoped binding captured in some function then loop body is converted to a function.
+     * Lexical bindings declared in loop initializer will be passed into the loop body function as parameters,
+     * however if this binding is modified inside the body - this new value should be propagated back to the original binding.
+     * This is done by declaring new variable (out parameter holder) outside of the loop for every binding that is reassigned inside the body.
+     * On every iteration this variable is initialized with value of corresponding binding.
+     * At every point where control flow leaves the loop either explicitly (break/continue) or implicitly (at the end of loop body)
+     * we copy the value inside the loop to the out parameter holder.
+     *
+     * for (let x;;) {
+     *     let a = 1;
+     *     let b = () => a;
+     *     x++
+     *     if (...) break;
+     *     ...
+     * }
+     *
+     * will be converted to
+     *
+     * var out_x;
+     * var loop = function(x) {
+     *     var a = 1;
+     *     var b = function() { return a; }
+     *     x++;
+     *     if (...) return out_x = x, "break";
+     *     ...
+     *     out_x = x;
+     * }
+     * for (var x;;) {
+     *     out_x = x;
+     *     var state = loop(x);
+     *     x = out_x;
+     *     if (state === "break") break;
+     * }
+     *
+     * NOTE: values to out parameters are not copies if loop is abrupted with 'return' - in this case this will end the entire enclosing function
+     * so nobody can observe this new value.
+     */
+    interface LoopOutParameter {
+        originalName: Identifier;
+        outParamName: Identifier;
+    }
+
+    const enum CopyDirection {
+        ToOriginal,
+        ToOutParameter
+    }
+
+    const enum Jump {
+        Break       = 1 << 1,
+        Continue    = 1 << 2,
+        Return      = 1 << 3
+    }
+
+    interface ConvertedLoop {
+        functionName: string;
+        paramList: string;
+        state: ConvertedLoopState;
+    }
+
+    interface ConvertedLoopState {
+        /*
+         * set of labels that occurred inside the converted loop
+         * used to determine if labeled jump can be emitted as is or it should be dispatched to calling code
+         */
+        labels?: Map<string>;
+        /*
+         * collection of labeled jumps that transfer control outside the converted loop.
+         * maps store association 'label -> labelMarker' where
+         * - label - value of label as it appear in code
+         * - label marker - return value that should be interpreted by calling code as 'jump to <label>'
+         */
+        labeledNonLocalBreaks?: Map<string>;
+        labeledNonLocalContinues?: Map<string>;
+
+        /*
+         * set of non-labeled jumps that transfer control outside the converted loop
+         * used to emit dispatching logic in the caller of converted loop
+         */
+        nonLocalJumps?: Jump;
+
+        /*
+         * set of non-labeled jumps that should be interpreted as local
+         * i.e. if converted loop contains normal loop or switch statement then inside this loop break should be treated as local jump
+         */
+        allowedNonLabeledJumps?: Jump;
+
+        /*
+         * alias for 'arguments' object from the calling code stack frame
+         * i.e.
+         * for (let x;;) <statement that captures x in closure and uses 'arguments'>
+         * should be converted to
+         * var loop = function(x) { <code where 'arguments' is replaced with 'arguments_1'> }
+         * var arguments_1 = arguments
+         * for (var x;;) loop(x);
+         * otherwise semantics of the code will be different since 'arguments' inside converted loop body
+         * will refer to function that holds converted loop.
+         * This value is set on demand.
+         */
+        argumentsName?: string;
+
+        /*
+         * alias for 'this' from the calling code stack frame in case if this was used inside the converted loop
+         */
+        thisName?: string;
+
+        /*
+         * list of non-block scoped variable declarations that appear inside converted loop
+         * such variable declarations should be moved outside the loop body
+         * for (let x;;) {
+         *     var y = 1;
+         *     ...
+         * }
+         * should be converted to
+         * var loop = function(x) {
+         *    y = 1;
+         *    ...
+         * }
+         * var y;
+         * for (var x;;) loop(x);
+         */
+        hoistedLocalVariables?: Identifier[];
+
+        /**
+         * List of loop out parameters - detailed descripion can be found in the comment to LoopOutParameter
+         */
+        loopOutParameters?: LoopOutParameter[];
+    }
 
     export function transformES6(context: TransformationContext) {
         const {
@@ -34,6 +162,11 @@ namespace ts {
         let enclosingBlockScopeContainer: Node;
         let enclosingBlockScopeContainerParent: Node;
         let containingNonArrowFunction: FunctionLikeDeclaration;
+        
+        /**
+         * Used to track if we are emitting body of the converted loop
+         */
+        let convertedLoopState: ConvertedLoopState;
 
         /**
          * Keeps track of whether substitutions have been enabled for specific cases.
@@ -1100,21 +1233,33 @@ namespace ts {
         }
 
         function visitDoStatement(node: DoStatement) {
+            if (shouldConvertIterationStatementBody(node)) {
+                const convertedBody = convertIterationStatementBody(node);
+            }
             // TODO: Convert loop body for block scoped bindings.
             return visitEachChild(node, visitor, context);
         }
 
         function visitWhileStatement(node: WhileStatement) {
+            if (shouldConvertIterationStatementBody(node)) {
+                const convertedBody = convertIterationStatementBody(node);
+            }
             // TODO: Convert loop body for block scoped bindings.
             return visitEachChild(node, visitor, context);
         }
 
         function visitForStatement(node: ForStatement) {
+            if (shouldConvertIterationStatementBody(node)) {
+                const convertedBody = convertIterationStatementBody(node);
+            }
             // TODO: Convert loop body for block scoped bindings.
             return visitEachChild(node, visitor, context);
         }
 
         function visitForInStatement(node: ForInStatement) {
+            if (shouldConvertIterationStatementBody(node)) {
+                const convertedBody = convertIterationStatementBody(node);
+            }
             // TODO: Convert loop body for block scoped bindings.
             return visitEachChild(node, visitor, context);
         }
@@ -1300,6 +1445,81 @@ namespace ts {
             // new line
             addNode(expressions, getMutableClone(temp), node.multiLine);
             return createParen(inlineExpressions(expressions));
+        }
+
+        function shouldConvertIterationStatementBody(iterationStatement: IterationStatement): boolean {
+            return (resolver.getNodeCheckFlags(iterationStatement) & NodeCheckFlags.LoopWithCapturedBlockScopedBinding) == 0
+        }
+
+        function convertIterationStatementBody(node: IterationStatement): ConvertedLoop {
+            const functionName = createUniqueName("loop");
+            let loopInitializer: VariableDeclarationList;
+            switch (node.kind) {
+                case SyntaxKind.ForStatement:
+                case SyntaxKind.ForInStatement:
+                case SyntaxKind.ForOfStatement:
+                    const initializer = (<ForStatement | ForInStatement | ForOfStatement>node).initializer;
+                    if (initializer && initializer.kind === SyntaxKind.VariableDeclarationList) {
+                        loopInitializer = <VariableDeclarationList>(<ForStatement | ForInStatement | ForOfStatement>node).initializer;
+                    }
+                    break;
+            }
+            // variables that will be passed to the loop as parameters
+            let loopParameters: ParameterDeclaration[] = [];
+            // variables declared in the loop initializer that will be changed inside the loop
+            let loopOutParameters: LoopOutParameter[] = [];
+            if (loopInitializer && (getCombinedNodeFlags(loopInitializer) & NodeFlags.BlockScoped)) {
+                for (const decl of loopInitializer.declarations) {
+                    processLoopVariableDeclaration(decl, loopParameters, loopOutParameters);
+                }
+            }
+            
+            const outerConvertedLoopState = convertedLoopState;
+
+            convertedLoopState = { loopOutParameters };
+            const convertedLoopBody = visitEachChild(node.statement, visitor, context);
+            convertedLoopState = outerConvertedLoopState;
+            
+            let convertedLoop =
+                createVariableStatement(
+                /*modifiers*/ undefined,
+                    createVariableDeclarationList(
+                        [
+                            createVariableDeclaration(
+                                functionName,
+                                createFunctionExpression(
+                                /*asteriskToken*/ undefined,
+                                /*name*/ undefined,
+                                    loopParameters,
+                                    isBlock(convertedLoopBody)
+                                        ? <Block>convertedLoopBody
+                                        : createBlock(
+                                            [convertedLoopBody],
+                                        /*location*/ undefined,
+                                        /*multiline*/ true
+                                        )
+                                )
+                            )
+                        ]
+                    )
+                );
+            return { functionName, paramList, state: convertedLoopState }
+        }
+
+        function processLoopVariableDeclaration(decl: VariableDeclaration | BindingElement, loopParameters: ParameterDeclaration[], loopOutParameters: LoopOutParameter[]) {
+            const name = decl.name;
+            if (isBindingPattern(name)) {
+                for (const element of name.elements) {
+                    processLoopVariableDeclaration(element, loopParameters, loopOutParameters)
+                }
+            }
+            else {
+                loopParameters.push(createParameter(name));
+                if (resolver.getNodeCheckFlags(decl) & NodeCheckFlags.NeedsLoopOutParameter) {
+                    const outParamName = createUniqueName("out_" + name.text);
+                    loopOutParameters.push({ originalName: name, outParamName })
+                }
+            }
         }
 
         /**
