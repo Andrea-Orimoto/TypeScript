@@ -2139,7 +2139,7 @@ namespace ts {
                 return createFunctionApply(
                     visitNode(target, visitor, isExpression),
                     visitNode(thisArg, visitor, isExpression),
-                    transformAndSpreadElements(node.arguments, /*needsUniqueCopy*/ false, /*multiLine*/ false)
+                    transformAndSpreadElements(node.arguments, /*needsUniqueCopy*/ false, /*multiLine*/ false, /*hasTrailingComma*/ false)
                 );
             }
             else {
@@ -2182,7 +2182,7 @@ namespace ts {
                 createFunctionApply(
                     visitNode(target, visitor, isExpression),
                     thisArg,
-                    transformAndSpreadElements(createNodeArray([createVoidZero(), ...node.arguments]), /*needsUniqueCopy*/ false, /*multiLine*/ false)
+                    transformAndSpreadElements(createNodeArray([createVoidZero(), ...node.arguments]), /*needsUniqueCopy*/ false, /*multiLine*/ false, /*hasTrailingComma*/ false)
                 ),
                 []
             );
@@ -2195,7 +2195,7 @@ namespace ts {
          * @param needsUniqueCopy A value indicating whether to ensure that the result is a fresh array.
          * @param multiLine A value indicating whether the result should be emitted on multiple lines.
          */
-        function transformAndSpreadElements(elements: NodeArray<Expression>, needsUniqueCopy: boolean, multiLine: boolean, hasTrailingComma?: boolean): Expression {
+        function transformAndSpreadElements(elements: NodeArray<Expression>, needsUniqueCopy: boolean, multiLine: boolean, hasTrailingComma: boolean): Expression {
             // [source]
             //      [a, ...b, c]
             //
@@ -2212,7 +2212,8 @@ namespace ts {
             );
 
             if (segments.length === 1) {
-                return needsUniqueCopy && isSpreadElementExpression(elements[0])
+                const firstElement = elements[0];
+                return needsUniqueCopy && isSpreadElementExpression(firstElement) && firstElement.expression.kind !== SyntaxKind.ArrayLiteralExpression
                     ? createArraySlice(segments[0])
                     : segments[0];
             }
