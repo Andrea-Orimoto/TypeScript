@@ -247,7 +247,13 @@ namespace ts {
                     return visitIdentifier(<Identifier>node);
 
                 default:
-                    return visitEachChild(node, visitor, context);
+                    const savedConvertedLoopState = convertedLoopState;
+                    if (isFunctionLike(node) || isClassLike(node) || node.kind === SyntaxKind.ModuleDeclaration) {
+                        convertedLoopState = undefined;
+                    }
+                    const result = visitEachChild(node, visitor, context);
+                    convertedLoopState = savedConvertedLoopState;
+                    return result;
             }
         }
 
@@ -1407,8 +1413,6 @@ namespace ts {
          * @param node A ForOfStatement.
          */
         function visitForOfStatement(node: ForOfStatement): VisitResult<Statement> {
-            // TODO: Convert loop body for block scoped bindings.
-
             // The following ES6 code:
             //
             //    for (let v of expr) { }
