@@ -211,7 +211,7 @@ namespace ts {
         }
 
         function visitorWorker(node: Node): VisitResult<Node> {
-            if (node.transformFlags & TransformFlags.ES6 || convertedLoopState) {
+            if (node.transformFlags & TransformFlags.ES6 || node.kind === SyntaxKind.LabeledStatement) {
                 return visitJavaScript(node);
             }
             else if (node.transformFlags & TransformFlags.ContainsES6) {
@@ -223,7 +223,7 @@ namespace ts {
         }
 
         function visitorForConvertedLoopWorker(node: Node): VisitResult<Node> {
-            if (node.transformFlags & TransformFlags.ES6) {
+            if (node.transformFlags & TransformFlags.ES6 || node.kind === SyntaxKind.LabeledStatement) {
                 return visitJavaScript(node);
             }
             else {
@@ -1376,8 +1376,13 @@ namespace ts {
             return flattenVariableDestructuring(context, node, /*value*/ undefined, visitor);
         }
 
-        function visitLabeledStatement(node: LabeledStatement) {
-            return visitEachChild(node, visitor, context);
+        function visitLabeledStatement(node: LabeledStatement): VisitResult<Statement> {
+            if (isIterationStatement(node.statement, /*lookInLabeledStatements*/ false) && shouldConvertIterationStatementBody(<IterationStatement>node.statement)) {
+                return visitNodes(createNodeArray([node.statement]), visitor, isStatement);
+            }
+            else {
+                return visitEachChild(node, visitor, context);
+            }
         }
 
         function visitDoStatement(node: DoStatement) {
@@ -1529,7 +1534,7 @@ namespace ts {
             );
             setOriginalNode(forStatement, node);
             aggregateTransformFlags(forStatement);
-            return visitNodes(createNodeArray([forStatement]), visitor, isStatement)
+            return visitForStatement(forStatement);
         }
 
         /**
@@ -1787,7 +1792,11 @@ namespace ts {
                 /*multiline*/ true
             );
 
-            statements.push(visitEachChild(loop, visitor, context));
+            statements.push(
+                currentParent.kind === SyntaxKind.LabeledStatement
+                    ? createLabel((<LabeledStatement>currentParent).label, visitEachChild(loop, visitor, context))
+                    : visitEachChild(loop, visitor, context)
+                );
             return statements;
         }
 
