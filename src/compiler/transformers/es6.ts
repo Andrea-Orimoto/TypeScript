@@ -240,6 +240,12 @@ namespace ts {
                 case SyntaxKind.ContinueStatement:
                     return visitBreakOrContinueStatement(<BreakOrContinueStatement>node);
 
+                case SyntaxKind.ThisKeyword:
+                    return visitThisKeyword(node);
+
+                case SyntaxKind.Identifier:
+                    return visitIdentifier(<Identifier>node);
+
                 default:
                     return visitEachChild(node, visitor, context);
             }
@@ -385,6 +391,27 @@ namespace ts {
                     ]
                 )
             );
+        }
+
+        function visitThisKeyword(node: Node): Node {
+            Debug.assert(convertedLoopState !== undefined);
+
+            if (getNodeEmitFlags(node) & NodeEmitFlags.CapturesThis) {
+                // this node will be substituted later
+                return node;
+            }
+            return convertedLoopState.thisName || (convertedLoopState.thisName = createUniqueName("this"));
+        }
+
+        function visitIdentifier(node: Identifier): Identifier {
+            Debug.assert(convertedLoopState !== undefined);
+            if (isGeneratedIdentifier(node)) {
+                return node;
+            }
+            if (node.text !== "arguments" && !resolver.isArgumentsLocalBinding(<Identifier>getOriginalNode(node))) {
+                return node;
+            }
+            return convertedLoopState.argumentsName || (convertedLoopState.argumentsName = createUniqueName("arguments"));
         }
 
         function visitBreakOrContinueStatement(node: BreakOrContinueStatement): Statement {
@@ -1374,7 +1401,7 @@ namespace ts {
          *
          * @param node A ForOfStatement.
          */
-        function visitForOfStatement(node: ForOfStatement): Statement {
+        function visitForOfStatement(node: ForOfStatement): VisitResult<Statement> {
             // TODO: Convert loop body for block scoped bindings.
 
             // The following ES6 code:
@@ -1474,15 +1501,14 @@ namespace ts {
                 }
             }
 
-            const statement = visitNode(node.statement, visitor, isStatement);
-            if (isBlock(statement)) {
-                addRange(statements, statement.statements);
+            if (isBlock(node.statement)) {
+                addRange(statements, (<Block>node.statement).statements);
             }
             else {
-                statements.push(statement);
+                statements.push(node.statement);
             }
 
-            return createFor(
+            const forStatement = createFor(
                 createVariableDeclarationList(
                     [
                         createVariableDeclaration(counter, createLiteral(0), /*location*/ node.expression),
@@ -1501,6 +1527,9 @@ namespace ts {
                 ),
                 /*location*/ node
             );
+            setOriginalNode(forStatement, node);
+            aggregateTransformFlags(forStatement);
+            return visitNodes(createNodeArray([forStatement]), visitor, isStatement)
         }
 
         /**
