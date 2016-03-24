@@ -198,7 +198,9 @@ namespace ts {
 
             onBeforeVisitNode(node);
 
-            const visited = visitorWorker(node);
+            const visited = convertedLoopState 
+                ? visitorForConvertedLoopWorker(node) 
+                : visitorWorker(node);
 
             containingNonArrowFunction = savedContainingNonArrowFunction;
             currentParent = savedCurrentParent;
@@ -209,7 +211,7 @@ namespace ts {
         }
 
         function visitorWorker(node: Node): VisitResult<Node> {
-            if (node.transformFlags & TransformFlags.ES6) {
+            if (node.transformFlags & TransformFlags.ES6 || convertedLoopState) {
                 return visitJavaScript(node);
             }
             else if (node.transformFlags & TransformFlags.ContainsES6) {
@@ -217,6 +219,29 @@ namespace ts {
             }
             else {
                 return node;
+            }
+        }
+
+        function visitorForConvertedLoopWorker(node: Node): VisitResult<Node> {
+            if (node.transformFlags & TransformFlags.ES6) {
+                return visitJavaScript(node);
+            }
+            else {
+                return visitNodesInConvertedLoop(node);
+            }
+        }
+
+        function visitNodesInConvertedLoop(node: Node): VisitResult<Node> {
+            switch (node.kind) {
+                case SyntaxKind.ReturnStatement:
+                    return visitReturnStatement(<ReturnStatement>node);
+
+                case SyntaxKind.BreakStatement:
+                case SyntaxKind.ContinueStatement:
+                    return visitBreakOrContinueStatement(<BreakOrContinueStatement>node);
+
+                default:
+                    return visitEachChild(node, visitor, context);
             }
         }
 
@@ -312,8 +337,6 @@ namespace ts {
                 case SyntaxKind.SourceFile:
                     return visitSourceFileNode(<SourceFile>node);
 
-                case SyntaxKind.ReturnStatement:
-                    return visitReturnStatement(<ReturnStatement>node);
                 default:
                     Debug.failBadSyntaxKind(node);
                     return visitEachChild(node, visitor, context);
@@ -364,7 +387,7 @@ namespace ts {
             );
         }
 
-        function visitBreakStatement(node: BreakOrContinueStatement): Statement {
+        function visitBreakOrContinueStatement(node: BreakOrContinueStatement): Statement {
             if (convertedLoopState) {
                 // check if we can emit break\continue as is
                 // it is possible if either
@@ -1327,7 +1350,6 @@ namespace ts {
         }
 
         function visitLabeledStatement(node: LabeledStatement) {
-            // TODO: Convert loop body for block scoped bindings.
             return visitEachChild(node, visitor, context);
         }
 
@@ -1863,7 +1885,7 @@ namespace ts {
                     setLabeledJump(outerLoop, isBreak, labelText, labelMarker);
                     statements.push(createReturn(loopResultName));
                 }
-                caseClauses.push(createCaseClause(createLiteral(labelText), statements));
+                caseClauses.push(createCaseClause(createLiteral(labelMarker), statements));
             }
         }
 
