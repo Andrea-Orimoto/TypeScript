@@ -210,8 +210,14 @@ namespace ts {
             return visited;
         }
 
+        function shouldCheckNode(node: Node): boolean {
+            return (node.transformFlags & TransformFlags.ES6) !== 0 ||
+                node.kind === SyntaxKind.LabeledStatement ||
+                (isIterationStatement(node, /*lookInLabeledStatements*/ false) && shouldConvertIterationStatementBody(node))
+        }
+        
         function visitorWorker(node: Node): VisitResult<Node> {
-            if (node.transformFlags & TransformFlags.ES6 || node.kind === SyntaxKind.LabeledStatement) {
+            if (shouldCheckNode(node)) {
                 return visitJavaScript(node);
             }
             else if (node.transformFlags & TransformFlags.ContainsES6) {
@@ -223,7 +229,7 @@ namespace ts {
         }
 
         function visitorForConvertedLoopWorker(node: Node): VisitResult<Node> {
-            if (node.transformFlags & TransformFlags.ES6 || node.kind === SyntaxKind.LabeledStatement) {
+            if (shouldCheckNode(node)) {
                 return visitJavaScript(node);
             }
             else {
@@ -235,6 +241,9 @@ namespace ts {
             switch (node.kind) {
                 case SyntaxKind.ReturnStatement:
                     return visitReturnStatement(<ReturnStatement>node);
+
+                case SyntaxKind.VariableStatement:
+                    return visitVariableStatement(<VariableStatement>node);
 
                 case SyntaxKind.BreakStatement:
                 case SyntaxKind.ContinueStatement:
@@ -283,9 +292,6 @@ namespace ts {
                 case SyntaxKind.VariableDeclarationList:
                     return visitVariableDeclarationList(<VariableDeclarationList>node);
 
-                case SyntaxKind.VariableStatement:
-                    return visitVariableStatement(<VariableStatement>node);
-                
                 case SyntaxKind.LabeledStatement:
                     return visitLabeledStatement(<LabeledStatement>node);
 
@@ -1229,7 +1235,7 @@ namespace ts {
         }
 
         function visitVariableStatement(node: VariableStatement): Statement {
-            if (convertedLoopState && (getCombinedNodeFlags(node) & NodeFlags.BlockScoped) == 0) {
+            if (convertedLoopState && (getCombinedNodeFlags(node.declarationList) & NodeFlags.BlockScoped) == 0) {
                 // we are inside a converted loop - hoist variable declarations
                 let assignments: Expression[];
                 for (const decl of node.declarationList.declarations) {
@@ -1413,6 +1419,29 @@ namespace ts {
          * @param node A ForOfStatement.
          */
         function visitForOfStatement(node: ForOfStatement): VisitResult<Statement> {
+            const statementOrStatements = convertIterationStatementBodyIfNecessary(node);
+            const lastStatement = isArray(statementOrStatements) ? lastOrUndefined(statementOrStatements) : statementOrStatements; 
+            const loop = lastStatement.kind === SyntaxKind.LabeledStatement
+                ? (<LabeledStatement>lastStatement).statement
+                : lastStatement;
+
+            Debug.assert(loop.kind === SyntaxKind.ForOfStatement);
+
+            const statement = 
+                lastStatement.kind === SyntaxKind.LabeledStatement
+                ? createLabel((<LabeledStatement>lastStatement).label, convertForOfToFor(<ForOfStatement>loop))
+                : convertForOfToFor(<ForOfStatement>loop);
+
+            if (isArray(statementOrStatements)) {
+                statementOrStatements[statementOrStatements.length - 1] = statement;
+                return statementOrStatements;
+            }
+            else {
+                return statement;
+            }
+        }
+
+        function convertForOfToFor(node: ForOfStatement): ForStatement {
             // The following ES6 code:
             //
             //    for (let v of expr) { }
@@ -1434,7 +1463,7 @@ namespace ts {
             // Note also that because an extra statement is needed to assign to the LHS,
             // for-of bodies are always emitted as blocks.
 
-            const expression = visitNode(node.expression, visitor, isExpression);
+            const expression = node.expression;
             const initializer = node.initializer;
             const statements: Statement[] = [];
 
@@ -1517,7 +1546,7 @@ namespace ts {
                 statements.push(node.statement);
             }
 
-            const forStatement = createFor(
+            return createFor(
                 createVariableDeclarationList(
                     [
                         createVariableDeclaration(counter, createLiteral(0), /*location*/ node.expression),
@@ -1536,9 +1565,6 @@ namespace ts {
                 ),
                 /*location*/ node
             );
-            setOriginalNode(forStatement, node);
-            aggregateTransformFlags(forStatement);
-            return visitForStatement(forStatement);
         }
 
         /**
@@ -1634,7 +1660,7 @@ namespace ts {
                 return result;
             }
 
-            const functionName = createUniqueName("loop");
+            const functionName = createUniqueName("_loop");
             let loopInitializer: VariableDeclarationList;
             switch (node.kind) {
                 case SyntaxKind.ForStatement:
