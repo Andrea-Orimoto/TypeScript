@@ -117,6 +117,11 @@ namespace ts {
         thisName?: Identifier;
 
         /*
+         * set to true if node contains lexical this
+         */
+        containsLexicalThis?: boolean;
+
+        /*
          * list of non-block scoped variable declarations that appear inside converted loop
          * such variable declarations should be moved outside the loop body
          * for (let x;;) {
@@ -229,12 +234,22 @@ namespace ts {
         }
 
         function visitorForConvertedLoopWorker(node: Node): VisitResult<Node> {
+            const savedUseCapturedThis = useCapturedThis;
+
+            if (nodeStartsNewLexicalEnvironment(node)) {
+                useCapturedThis = false
+            }
+
+            let result: VisitResult<Node>;
             if (shouldCheckNode(node)) {
-                return visitJavaScript(node);
+                result = visitJavaScript(node);
             }
             else {
-                return visitNodesInConvertedLoop(node);
+                result = visitNodesInConvertedLoop(node);
             }
+
+            useCapturedThis = savedUseCapturedThis;
+            return result;
         }
 
         function visitNodesInConvertedLoop(node: Node): VisitResult<Node> {
@@ -260,7 +275,7 @@ namespace ts {
 
                 default:
                     const savedConvertedLoopState = convertedLoopState;
-                    if (isFunctionLike(node) || isClassLike(node) || node.kind === SyntaxKind.ModuleDeclaration) {
+                    if (nodeStartsNewLexicalEnvironment(node)) {
                         convertedLoopState = undefined;
                     }
                     const result = visitEachChild(node, visitor, context);
@@ -423,8 +438,9 @@ namespace ts {
         function visitThisKeyword(node: Node): Node {
             Debug.assert(convertedLoopState !== undefined);
 
-            if (getNodeEmitFlags(node) & NodeEmitFlags.CapturesThis) {
+            if (useCapturedThis) {
                 // this node will be substituted later
+                convertedLoopState.containsLexicalThis = true;
                 return node;
             }
             return convertedLoopState.thisName || (convertedLoopState.thisName = createUniqueName("this"));
@@ -1063,7 +1079,12 @@ namespace ts {
                 enableSubstitutionsForCapturedThis();
             }
 
+            const savedUseCapturedThis = useCapturedThis;
+            useCapturedThis = true;
+            
             const func = transformFunctionLikeToExpression(node, /*location*/ node, /*name*/ undefined);
+            
+            useCapturedThis = savedUseCapturedThis;
             setNodeEmitFlags(func, NodeEmitFlags.CapturesThis);
             return func;
         }
@@ -1754,11 +1775,16 @@ namespace ts {
                         [
                             createVariableDeclaration(
                                 functionName,
-                                createFunctionExpression(
-                                /*asteriskToken*/ undefined,
-                                /*name*/ undefined,
-                                    loopParameters,
-                                    <Block>loopBody
+                                setNodeEmitFlags(
+                                    createFunctionExpression(
+                                        /*asteriskToken*/ undefined,
+                                        /*name*/ undefined,
+                                        loopParameters,
+                                        <Block>loopBody
+                                    ),
+                                    currentState.containsLexicalThis 
+                                        ? NodeEmitFlags.CapturesThis
+                                        : 0
                                 )
                             )
                         ]
