@@ -201,12 +201,18 @@ namespace ts {
             const savedEnclosingBlockScopeContainer = enclosingBlockScopeContainer;
             const savedEnclosingBlockScopeContainerParent = enclosingBlockScopeContainerParent;
 
+            const savedConvertedLoopState = convertedLoopState;
+            if (nodeStartsNewLexicalEnvironment(node) || isClassLike(node)) {
+                convertedLoopState = undefined;
+            }
+
             onBeforeVisitNode(node);
 
             const visited = convertedLoopState
                 ? visitorForConvertedLoopWorker(node)
                 : visitorWorker(node);
 
+            convertedLoopState = savedConvertedLoopState;
             containingNonArrowFunction = savedContainingNonArrowFunction;
             currentParent = savedCurrentParent;
             currentNode = savedCurrentNode;
@@ -236,11 +242,12 @@ namespace ts {
         function visitorForConvertedLoopWorker(node: Node): VisitResult<Node> {
             const savedUseCapturedThis = useCapturedThis;
 
-            if (nodeStartsNewLexicalEnvironment(node)) {
+            if (nodeStartsNewLexicalEnvironment(node) || isClassLike(node)) {
                 useCapturedThis = false
             }
 
             let result: VisitResult<Node>;
+            
             if (shouldCheckNode(node)) {
                 result = visitJavaScript(node);
             }
@@ -274,13 +281,7 @@ namespace ts {
                     return visitIdentifier(<Identifier>node);
 
                 default:
-                    const savedConvertedLoopState = convertedLoopState;
-                    if (nodeStartsNewLexicalEnvironment(node)) {
-                        convertedLoopState = undefined;
-                    }
-                    const result = visitEachChild(node, visitor, context);
-                    convertedLoopState = savedConvertedLoopState;
-                    return result;
+                    return visitEachChild(node, visitor, context);
             }
         }
 
