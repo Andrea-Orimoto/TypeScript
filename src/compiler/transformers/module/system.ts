@@ -42,13 +42,17 @@ namespace ts {
         let contextObjectForFile: Identifier;
         let exportedLocalNames: Identifier[];
         let exportedFunctionDeclarations: ExpressionStatement[];
+
         let enclosingBlockScopedContainer: Node;
+        let currentParent: Node;
+        let currentNode: Node;
 
         return transformSourceFile;
 
         function transformSourceFile(node: SourceFile) {
             if (isExternalModule(node) || compilerOptions.isolatedModules) {
                 currentSourceFile = node;
+                currentNode = node;
 
                 // Perform the transformation.
                 const updated = transformSystemModuleWorker(node);
@@ -441,11 +445,26 @@ namespace ts {
                     return visitNestedNode(node);
             }
         }
-        
+
         function visitNestedNode(node: Node): VisitResult<Node> {
             const savedEnclosingBlockScopedContainer = enclosingBlockScopedContainer;
+            const savedCurrentParent = currentParent;
+            const savedCurrentNode = currentNode;
+
+            const currentGrandparent = currentParent;
+            currentParent = currentNode;
+            currentNode = node;
+
+            if (currentParent && isBlockScope(currentParent, currentGrandparent)) {
+                enclosingBlockScopedContainer = currentParent;
+            }
+
             const result = visitNestedNodeWorker(node);
+
             enclosingBlockScopedContainer = savedEnclosingBlockScopedContainer;
+            currentParent = savedCurrentParent;
+            currentNode = savedCurrentNode;
+
             return result;
         }
 
@@ -1327,9 +1346,16 @@ namespace ts {
         function hoistBindingElement(node: VariableDeclaration | BindingElement, isExported: boolean) {
             const name = node.name;
             if (isIdentifier(name)) {
-                hoistVariableDeclaration(getSynthesizedClone(name));
-                if (isExported) {
-                    recordExportName(name);
+                // hoist only non-block scoped declarations or block scoped declarations parented by source file
+                const shouldHoist =
+                    ((getCombinedNodeFlags(getOriginalNode(node)) & NodeFlags.BlockScoped) == 0) ||
+                    enclosingBlockScopedContainer.kind === SyntaxKind.SourceFile;
+
+                if (shouldHoist) {
+                    hoistVariableDeclaration(getSynthesizedClone(name));
+                    if (isExported) {
+                        recordExportName(name);
+                    }
                 }
             }
             else if (isBindingPattern(name)) {

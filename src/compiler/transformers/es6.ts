@@ -162,7 +162,7 @@ namespace ts {
         let enclosingBlockScopeContainer: Node;
         let enclosingBlockScopeContainerParent: Node;
         let containingNonArrowFunction: FunctionLikeDeclaration;
-        
+
         /**
          * Used to track if we are emitting body of the converted loop
          */
@@ -198,8 +198,8 @@ namespace ts {
 
             onBeforeVisitNode(node);
 
-            const visited = convertedLoopState 
-                ? visitorForConvertedLoopWorker(node) 
+            const visited = convertedLoopState
+                ? visitorForConvertedLoopWorker(node)
                 : visitorWorker(node);
 
             containingNonArrowFunction = savedContainingNonArrowFunction;
@@ -213,9 +213,9 @@ namespace ts {
         function shouldCheckNode(node: Node): boolean {
             return (node.transformFlags & TransformFlags.ES6) !== 0 ||
                 node.kind === SyntaxKind.LabeledStatement ||
-                (isIterationStatement(node, /*lookInLabeledStatements*/ false) && shouldConvertIterationStatementBody(node))
+                (isIterationStatement(node, /*lookInLabeledStatements*/ false) && shouldConvertIterationStatementBody(node));
         }
-        
+
         function visitorWorker(node: Node): VisitResult<Node> {
             if (shouldCheckNode(node)) {
                 return visitJavaScript(node);
@@ -396,8 +396,8 @@ namespace ts {
                     [
                         createPropertyAssignment(
                             createIdentifier("value"),
-                            node.expression 
-                                ? visitEachChild(node.expression, visitor, context) 
+                            node.expression
+                                ? visitEachChild(node.expression, visitor, context)
                                 : createVoidZero()
                         )
                     ]
@@ -442,7 +442,7 @@ namespace ts {
                     if (!node.label) {
                         if (node.kind === SyntaxKind.BreakStatement) {
                             convertedLoopState.nonLocalJumps |= Jump.Break;
-                            labelMarker = "break"
+                            labelMarker = "break";
                         }
                         else {
                             convertedLoopState.nonLocalJumps |= Jump.Continue;
@@ -1261,7 +1261,7 @@ namespace ts {
             }
             return visitEachChild(node, visitor, context);
         }
-        
+
         /**
          * Visits a VariableDeclarationList that is block scoped (e.g. `let` or `const`).
          *
@@ -1420,14 +1420,14 @@ namespace ts {
          */
         function visitForOfStatement(node: ForOfStatement): VisitResult<Statement> {
             const statementOrStatements = convertIterationStatementBodyIfNecessary(node);
-            const lastStatement = isArray(statementOrStatements) ? lastOrUndefined(statementOrStatements) : statementOrStatements; 
+            const lastStatement = isArray(statementOrStatements) ? lastOrUndefined(statementOrStatements) : statementOrStatements;
             const loop = lastStatement.kind === SyntaxKind.LabeledStatement
                 ? (<LabeledStatement>lastStatement).statement
                 : lastStatement;
 
             Debug.assert(loop.kind === SyntaxKind.ForOfStatement);
 
-            const statement = 
+            const statement =
                 lastStatement.kind === SyntaxKind.LabeledStatement
                 ? createLabel((<LabeledStatement>lastStatement).label, convertForOfToFor(<ForOfStatement>loop))
                 : convertForOfToFor(<ForOfStatement>loop);
@@ -1617,7 +1617,7 @@ namespace ts {
         }
 
         function shouldConvertIterationStatementBody(node: IterationStatement): boolean {
-            return (resolver.getNodeCheckFlags(getOriginalNode(node)) & NodeCheckFlags.LoopWithCapturedBlockScopedBinding) !== 0
+            return (resolver.getNodeCheckFlags(getOriginalNode(node)) & NodeCheckFlags.LoopWithCapturedBlockScopedBinding) !== 0;
         }
 
         /**
@@ -1673,9 +1673,9 @@ namespace ts {
                     break;
             }
             // variables that will be passed to the loop as parameters
-            let loopParameters: ParameterDeclaration[] = [];
+            const loopParameters: ParameterDeclaration[] = [];
             // variables declared in the loop initializer that will be changed inside the loop
-            let loopOutParameters: LoopOutParameter[] = [];
+            const loopOutParameters: LoopOutParameter[] = [];
             if (loopInitializer && (getCombinedNodeFlags(loopInitializer) & NodeFlags.BlockScoped)) {
                 for (const decl of loopInitializer.declarations) {
                     processLoopVariableDeclaration(decl, loopParameters, loopOutParameters);
@@ -1716,9 +1716,9 @@ namespace ts {
             }
 
             if (!isBlock(loopBody)) {
-                loopBody = createBlock([loopBody], /*location*/ undefined, /*multiline*/ true)
+                loopBody = createBlock([loopBody], /*location*/ undefined, /*multiline*/ true);
             }
-            let convertedLoopVariable =
+            const convertedLoopVariable =
                 createVariableStatement(
                 /*modifiers*/ undefined,
                     createVariableDeclarationList(
@@ -1753,7 +1753,7 @@ namespace ts {
                             currentState.argumentsName,
                             createIdentifier("arguments")
                         )
-                    )
+                    );
                 }
             }
 
@@ -1794,14 +1794,14 @@ namespace ts {
                     }
                 }
             }
-            
+
             // add extra variables to hold out parameters if necessary
             if (loopOutParameters.length) {
                 if (!extraVariableDeclarations) {
                     extraVariableDeclarations = [];
                 }
                 for (const outParam of loopOutParameters) {
-                    extraVariableDeclarations.push(createVariableDeclaration(outParam.outParamName))
+                    extraVariableDeclarations.push(createVariableDeclaration(outParam.outParamName));
                 }
             }
 
@@ -1810,12 +1810,11 @@ namespace ts {
                 statements.push(createVariableStatement(
                     /*modifiers*/ undefined,
                     createVariableDeclarationList(extraVariableDeclarations)
-                ))
+                ));
             }
-            
+
             const loop = <IterationStatement>getMutableClone(node);
-            const loopStatements: Statement[] = [];
-            
+
             loop.statement = createBlock(
                 generateCallToConvertedLoop(functionName, loopParameters, currentState),
                 /*location*/ undefined,
@@ -1939,7 +1938,6 @@ namespace ts {
                 return;
             }
             for (const labelText in table) {
-                const marker = table[labelText];
                 const labelMarker = table[labelText];
                 const statements: Statement[] = [];
                 // if there are no outer converted loop or outer label in question is located inside outer converted loop
@@ -1961,14 +1959,14 @@ namespace ts {
             const name = decl.name;
             if (isBindingPattern(name)) {
                 for (const element of name.elements) {
-                    processLoopVariableDeclaration(element, loopParameters, loopOutParameters)
+                    processLoopVariableDeclaration(element, loopParameters, loopOutParameters);
                 }
             }
             else {
                 loopParameters.push(createParameter(name));
                 if (resolver.getNodeCheckFlags(decl) & NodeCheckFlags.NeedsLoopOutParameter) {
                     const outParamName = createUniqueName("out_" + name.text);
-                    loopOutParameters.push({ originalName: name, outParamName })
+                    loopOutParameters.push({ originalName: name, outParamName });
                 }
             }
         }
