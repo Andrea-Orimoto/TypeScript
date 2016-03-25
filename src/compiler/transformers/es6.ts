@@ -245,6 +245,9 @@ namespace ts {
                 case SyntaxKind.VariableStatement:
                     return visitVariableStatement(<VariableStatement>node);
 
+                case SyntaxKind.SwitchStatement:
+                    return visitSwitchStatement(<SwitchStatement>node);
+
                 case SyntaxKind.BreakStatement:
                 case SyntaxKind.ContinueStatement:
                     return visitBreakOrContinueStatement(<BreakOrContinueStatement>node);
@@ -386,10 +389,22 @@ namespace ts {
             }
         }
 
-        function visitReturnStatement(node: ReturnStatement): Statement {
-            if (!convertedLoopState) {
-                return visitEachChild(node, visitor, context);
+        function visitSwitchStatement(node: SwitchStatement): SwitchStatement {
+            Debug.assert(convertedLoopState !== undefined);
+            
+            const savedAllowedNonLabeledJumps = convertedLoopState.allowedNonLabeledJumps;
+            if (convertedLoopState) {
+                // for switch statement allow only non-labeled break
+                convertedLoopState.allowedNonLabeledJumps |= Jump.Break;
             }
+            const result = visitEachChild(node, visitor, context);
+            convertedLoopState.allowedNonLabeledJumps = savedAllowedNonLabeledJumps;
+            return result;
+        }
+        
+        function visitReturnStatement(node: ReturnStatement): Statement {
+            Debug.assert(convertedLoopState !== undefined);
+
             convertedLoopState.nonLocalJumps |= Jump.Return;
             return createReturn(
                 createObjectLiteral(
@@ -1389,12 +1404,26 @@ namespace ts {
         }
 
         function visitLabeledStatement(node: LabeledStatement): VisitResult<Statement> {
+            if (convertedLoopState) {
+                if (!convertedLoopState.labels) {
+                    convertedLoopState.labels = {};
+                }
+                convertedLoopState.labels[node.label.text] = node.label.text;
+            }
+
+            let result: VisitResult<Statement>;
             if (isIterationStatement(node.statement, /*lookInLabeledStatements*/ false) && shouldConvertIterationStatementBody(<IterationStatement>node.statement)) {
-                return visitNodes(createNodeArray([node.statement]), visitor, isStatement);
+                result = visitNodes(createNodeArray([node.statement]), visitor, isStatement);
             }
             else {
-                return visitEachChild(node, visitor, context);
+                result = visitEachChild(node, visitor, context);
             }
+
+            if (convertedLoopState) {
+                convertedLoopState.labels[node.label.text] = undefined;
+            }
+
+            return result;
         }
 
         function visitDoStatement(node: DoStatement) {
@@ -1813,18 +1842,21 @@ namespace ts {
                 ));
             }
 
-            const loop = <IterationStatement>getMutableClone(node);
-
+            let loop = <IterationStatement>getMutableClone(node);
+            // clean statement part 
+            loop.statement = undefined;
+            // visit childnodes to transform initializer/condition/incrementor parts
+            loop = visitEachChild(loop, visitor, context);
+            // set loop statement
             loop.statement = createBlock(
                 generateCallToConvertedLoop(functionName, loopParameters, currentState),
                 /*location*/ undefined,
                 /*multiline*/ true
             );
-
             statements.push(
                 currentParent.kind === SyntaxKind.LabeledStatement
-                    ? createLabel((<LabeledStatement>currentParent).label, visitEachChild(loop, visitor, context))
-                    : visitEachChild(loop, visitor, context)
+                    ? createLabel((<LabeledStatement>currentParent).label, loop)
+                    : loop
                 );
             return statements;
         }
