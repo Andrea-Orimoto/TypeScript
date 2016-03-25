@@ -308,6 +308,9 @@ namespace ts {
                 case SyntaxKind.VariableDeclaration:
                     return visitVariableDeclaration(<VariableDeclaration>node);
 
+                case SyntaxKind.Identifier:
+                    return visitIdentifier(<Identifier>node);
+
                 case SyntaxKind.VariableDeclarationList:
                     return visitVariableDeclarationList(<VariableDeclarationList>node);
 
@@ -448,7 +451,9 @@ namespace ts {
         }
 
         function visitIdentifier(node: Identifier): Identifier {
-            Debug.assert(convertedLoopState !== undefined);
+            if (!convertedLoopState) {
+                return node;
+            }
             if (isGeneratedIdentifier(node)) {
                 return node;
             }
@@ -1280,7 +1285,7 @@ namespace ts {
                     if (decl.initializer) {
                         let assignment: Expression;
                         if (isBindingPattern(decl.name)) {
-                            assignment = flattenVariableDestructuringToExpression(context, decl, hoistVariableDeclaration);
+                            assignment = flattenVariableDestructuringToExpression(context, decl, hoistVariableDeclaration,/*nameSubstitution*/ undefined, visitor);
                         }
                         else {
                             assignment = createBinary(<Identifier>decl.name, SyntaxKind.EqualsToken, decl.initializer);
