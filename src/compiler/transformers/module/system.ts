@@ -42,6 +42,7 @@ namespace ts {
         let contextObjectForFile: Identifier;
         let exportedLocalNames: Identifier[];
         let exportedFunctionDeclarations: ExpressionStatement[];
+        let enclosingBlockScopedContainer: Node;
 
         return transformSourceFile;
 
@@ -440,8 +441,15 @@ namespace ts {
                     return visitNestedNode(node);
             }
         }
-
+        
         function visitNestedNode(node: Node): VisitResult<Node> {
+            const savedEnclosingBlockScopedContainer = enclosingBlockScopedContainer;
+            const result = visitNestedNodeWorker(node);
+            enclosingBlockScopedContainer = savedEnclosingBlockScopedContainer;
+            return result;
+        }
+
+        function visitNestedNodeWorker(node: Node): VisitResult<Node> {
             switch (node.kind) {
                 case SyntaxKind.VariableStatement:
                     return visitVariableStatement(<VariableStatement>node);
@@ -685,6 +693,10 @@ namespace ts {
             return statements;
         }
 
+        function shouldHoistLoopInitializer(node: VariableDeclarationList | Expression) {
+            return isVariableDeclarationList(node) && (getCombinedNodeFlags(node) & NodeFlags.BlockScoped) === 0;
+        }
+
         /**
          * Visits the body of a ForStatement to hoist declarations.
          *
@@ -692,9 +704,9 @@ namespace ts {
          */
         function visitForStatement(node: ForStatement): ForStatement {
             const initializer = node.initializer;
-            if (isVariableDeclarationList(initializer)) {
+            if (shouldHoistLoopInitializer(initializer)) {
                 const expressions: Expression[] = [];
-                for (const variable of initializer.declarations) {
+                for (const variable of (<VariableDeclarationList>initializer).declarations) {
                     addNode(expressions, transformVariable(variable, /*isExported*/ false));
                 };
 
@@ -735,9 +747,9 @@ namespace ts {
          */
         function visitForInStatement(node: ForInStatement): ForInStatement {
             const initializer = node.initializer;
-            if (isVariableDeclarationList(initializer)) {
+            if (shouldHoistLoopInitializer(initializer)) {
                 const updated = getMutableClone(node);
-                updated.initializer = transformForBinding(initializer);
+                updated.initializer = transformForBinding(<VariableDeclarationList>initializer);
                 updated.statement = visitNode(node.statement, visitNestedNode, isStatement, /*optional*/ false, liftToBlock);
                 return updated;
             }
@@ -753,9 +765,9 @@ namespace ts {
          */
         function visitForOfStatement(node: ForOfStatement): ForOfStatement {
             const initializer = node.initializer;
-            if (isVariableDeclarationList(initializer)) {
+            if (shouldHoistLoopInitializer(initializer)) {
                 const updated = getMutableClone(node);
-                updated.initializer = transformForBinding(initializer);
+                updated.initializer = transformForBinding(<VariableDeclarationList>initializer);
                 updated.statement = visitNode(node.statement, visitNestedNode, isStatement, /*optional*/ false, liftToBlock);
                 return updated;
             }
