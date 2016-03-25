@@ -589,10 +589,17 @@ namespace ts {
          * @param node The variable statement to visit.
          */
         function visitVariableStatement(node: VariableStatement): VisitResult<Statement> {
+            // hoist only non-block scoped declarations or block scoped declarations parented by source file
+            const shouldHoist =
+                ((getCombinedNodeFlags(getOriginalNode(node.declarationList)) & NodeFlags.BlockScoped) == 0) ||
+                enclosingBlockScopedContainer.kind === SyntaxKind.SourceFile;
+            if (!shouldHoist) {
+                return node;
+            }
             const isExported = hasModifier(node, ModifierFlags.Export);
             const expressions: Expression[] = [];
             for (const variable of node.declarationList.declarations) {
-                addNode(expressions, transformVariable(variable, isExported));
+                addNode(expressions, <Expression>transformVariable(variable, isExported));
             }
 
             if (expressions.length) {
@@ -608,7 +615,7 @@ namespace ts {
          * @param node The VariableDeclaration to transform.
          * @param isExported A value used to indicate whether the containing statement was exported.
          */
-        function transformVariable(node: VariableDeclaration, isExported: boolean): Expression {
+        function transformVariable(node: VariableDeclaration, isExported: boolean): VariableDeclaration | Expression {
             // Hoist any bound names within the declaration.
             hoistBindingElement(node, isExported);
 
@@ -726,7 +733,7 @@ namespace ts {
             if (shouldHoistLoopInitializer(initializer)) {
                 const expressions: Expression[] = [];
                 for (const variable of (<VariableDeclarationList>initializer).declarations) {
-                    addNode(expressions, transformVariable(variable, /*isExported*/ false));
+                    addNode(expressions, <Expression>transformVariable(variable, /*isExported*/ false));
                 };
 
                 return createFor(
@@ -1343,19 +1350,12 @@ namespace ts {
             exportedFunctionDeclarations.push(createDeclarationExport(node));
         }
 
-        function hoistBindingElement(node: VariableDeclaration | BindingElement, isExported: boolean) {
+        function hoistBindingElement(node: VariableDeclaration | BindingElement, isExported: boolean): void {
             const name = node.name;
             if (isIdentifier(name)) {
-                // hoist only non-block scoped declarations or block scoped declarations parented by source file
-                const shouldHoist =
-                    ((getCombinedNodeFlags(getOriginalNode(node)) & NodeFlags.BlockScoped) == 0) ||
-                    enclosingBlockScopedContainer.kind === SyntaxKind.SourceFile;
-
-                if (shouldHoist) {
-                    hoistVariableDeclaration(getSynthesizedClone(name));
-                    if (isExported) {
-                        recordExportName(name);
-                    }
+                hoistVariableDeclaration(getSynthesizedClone(name));
+                if (isExported) {
+                    recordExportName(name);
                 }
             }
             else if (isBindingPattern(name)) {
