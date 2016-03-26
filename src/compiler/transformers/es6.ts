@@ -499,10 +499,18 @@ namespace ts {
                     }
                     let returnExpression: Expression = createLiteral(labelMarker);
                     if (convertedLoopState.loopOutParameters.length) {
-                        returnExpression = reduceRight(
-                            convertedLoopState.loopOutParameters,
-                            (acc, v) => createBinary(acc, SyntaxKind.CommaToken, copyOutParameter(v, CopyDirection.ToOutParameter)), returnExpression
-                        );
+                        const outParams = convertedLoopState.loopOutParameters;
+                        let expr: Expression;
+                        for (let i = 0; i < outParams.length; ++i) {
+                            const copyExpr = copyOutParameter(outParams[i], CopyDirection.ToOutParameter);
+                            if (i === 0) {
+                                expr = copyExpr
+                            }
+                            else {
+                                expr = createBinary(expr, SyntaxKind.CommaToken, copyExpr);
+                            }
+                        }
+                        returnExpression = createBinary(expr, SyntaxKind.CommaToken, returnExpression);
                     }
                     return createReturn(returnExpression);
                 }
@@ -1767,7 +1775,7 @@ namespace ts {
 
             if (loopOutParameters.length) {
                 const statements = isBlock(loopBody) ? (<Block>loopBody).statements.slice() : [loopBody];
-                copyOutParameters(loopOutParameters, CopyDirection.ToOriginal, statements);
+                copyOutParameters(loopOutParameters, CopyDirection.ToOutParameter, statements);
                 loopBody = createBlock(statements, /*location*/ undefined, /*multiline*/ true);
             }
 
@@ -1896,12 +1904,12 @@ namespace ts {
         function copyOutParameter(outParam: LoopOutParameter, copyDirection: CopyDirection): BinaryExpression {
             const source = copyDirection === CopyDirection.ToOriginal ? outParam.outParamName : outParam.originalName;
             const target = copyDirection === CopyDirection.ToOriginal ? outParam.originalName : outParam.outParamName;
-            return createBinary(source, SyntaxKind.EqualsToken, target);
+            return createBinary(target, SyntaxKind.EqualsToken, source);
         }
 
         function copyOutParameters(outParams: LoopOutParameter[], copyDirection: CopyDirection, statements: Statement[]): void {
             for (const outParam of outParams) {
-                statements.push(createStatement(copyOutParameter(outParam, CopyDirection.ToOriginal)));
+                statements.push(createStatement(copyOutParameter(outParam, copyDirection)));
             }
         }
 
