@@ -627,14 +627,6 @@ namespace ts {
         return node;
     }
 
-    export function createShorthandPropertyAssignment(name: Identifier, objectAssignmentInitializer?: Expression, location?: TextRange) {
-        const node = <ShorthandPropertyAssignment>createNode(SyntaxKind.ShorthandPropertyAssignment, location);
-        node.name = name;
-        node.questionToken = undefined;
-        node.objectAssignmentInitializer = objectAssignmentInitializer;
-        return node;
-    }
-
     // Compound nodes
 
     export function createComma(left: Expression, right: Expression) {

@@ -64,12 +64,6 @@ namespace ts {
         Return      = 1 << 3
     }
 
-    interface ConvertedLoop {
-        functionName: string;
-        paramList: string;
-        state: ConvertedLoopState;
-    }
-
     interface ConvertedLoopState {
         /*
          * set of labels that occurred inside the converted loop
@@ -117,7 +111,7 @@ namespace ts {
         thisName?: Identifier;
 
         /*
-         * set to true if node contains lexical this
+         * set to true if node contains lexical 'this' so we can mark function that wraps convered loop body as 'CapturedThis' for subsequence substitution.
          */
         containsLexicalThis?: boolean;
 
@@ -203,6 +197,7 @@ namespace ts {
 
             const savedConvertedLoopState = convertedLoopState;
             if (nodeStartsNewLexicalEnvironment(node) || isClassLike(node)) {
+                // don't treat content of nodes that start new lexical environment or class-like nodes as part of converted loop copy 
                 convertedLoopState = undefined;
             }
 
@@ -412,11 +407,11 @@ namespace ts {
             Debug.assert(convertedLoopState !== undefined);
             
             const savedAllowedNonLabeledJumps = convertedLoopState.allowedNonLabeledJumps;
-            if (convertedLoopState) {
-                // for switch statement allow only non-labeled break
-                convertedLoopState.allowedNonLabeledJumps |= Jump.Break;
-            }
+            // for switch statement allow only non-labeled break
+            convertedLoopState.allowedNonLabeledJumps |= Jump.Break;
+
             const result = visitEachChild(node, visitor, context);
+
             convertedLoopState.allowedNonLabeledJumps = savedAllowedNonLabeledJumps;
             return result;
         }
@@ -443,7 +438,7 @@ namespace ts {
             Debug.assert(convertedLoopState !== undefined);
 
             if (useCapturedThis) {
-                // this node will be substituted later
+                // if useCapturedThis is true then 'this' keyword is contained inside the arrow function. 
                 convertedLoopState.containsLexicalThis = true;
                 return node;
             }
